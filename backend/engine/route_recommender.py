@@ -115,9 +115,31 @@ class RouteRecommender:
                     threat = d.get("base_threat", 0.05)
                     delay = 0
                     
+                    # Live p85 quantile intelligence for transit edges.
+                    # Scenario penalties remain separate and are added below.
+                    p85_delay = 0
+                    if mode != "transfer":
+                        try:
+                            u_data = G_p.nodes[u]
+                            origin_name = u_data.get("display_name", u_data.get("physical_id", u))
+                            destination_name = v_data.get("display_name", p_id)
+                            p85 = self.predictor.predict_worst_case_delay(
+                                origin=origin_name,
+                                destination=destination_name,
+                                transport_mode=mode,
+                                leg_type="Global_Freight",
+                                condition_flag="Clear",
+                                nlp_score=threat
+                            )
+                            p85_delay = float(p85.get("final_delay_presented", 0))
+                        except Exception as e:
+                            print(f"[P85] Edge prediction fallback: {e}")
+                    
                     if p_id in disruptions:
                         threat = max(threat, disruptions[p_id]["threat"])
                         delay += disruptions[p_id]["delay"]
+                    
+                    delay += p85_delay
                     
                     if persona == "FASTEST":
                         return base_t + delay
@@ -154,6 +176,32 @@ class RouteRecommender:
                     l_threat = d.get("base_threat", 0.05)
                     l_news = d.get("base_news", "Standard conditions")
                     l_source = "FALLBACK"
+                    
+                    # Apply the same p85 prediction used by the route weight
+                    # so displayed ETA matches the optimization logic.
+                    p85_delay = 0
+                    p85_reason = None
+                    if mode != "transfer":
+                        try:
+                            u_data = G_p.nodes[u]
+                            origin_name = u_data.get("display_name", u_data.get("physical_id", u))
+                            destination_name = v_data.get("display_name", p_id)
+                            p85 = self.predictor.predict_worst_case_delay(
+                                origin=origin_name,
+                                destination=destination_name,
+                                transport_mode=mode,
+                                leg_type="Global_Freight",
+                                condition_flag="Clear",
+                                nlp_score=l_threat
+                            )
+                            p85_delay = float(p85.get("final_delay_presented", 0))
+                            p85_reason = p85.get("calibration_reason")
+                            if p85_delay > 0:
+                                l_time += p85_delay
+                                l_source = "P85_MODEL"
+                                l_news = p85_reason or "Calibrated p85 quantile delay prediction."
+                        except Exception as e:
+                            print(f"[P85] Leg prediction fallback: {e}")
                     
                     if p_id in disruptions:
                         l_time += disruptions[p_id]["delay"]
