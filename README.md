@@ -14,7 +14,7 @@ Traditional supply chain routing algorithms (like Dijkstra or A*) rely on static
 
 * **Real-time Threat Intelligence**: Monitors global RSS feeds to detect local disruptions before they trap inventory.
 * **Context-Aware Relevance Filter (CARF)**: Eliminates false positives (e.g., ignoring a seaport strike if the transport mode is Rail).
-* **Quantile ML Risk Assessment**: Uses a Gradient Boosting Regressor trained on 50,000+ real-world historical incidents to predict the **worst-case p85 scenario buffer**, not just the mean delay.
+* **Quantile ML Risk Assessment**: Uses a Gradient Boosting Regressor with quantile loss (alpha=0.85) to estimate a conservative transit-delay buffer, calibrated by transport mode.
 * **Executive Dashboard**: A visually stunning 3-column command interface featuring real-time tradeoff strips, operational configuration drop-downs, and forensic audit trails.
 
 ---
@@ -82,7 +82,7 @@ Smart_Supply_Chain/
 ##  Decision Superiority Benchmarks
 
 Supplychainer shifts logistics from geometric shortest paths to optimal business decisions:
-* **Suez Canal Failure**: Reroutes automatically via Cape of Good Hope, avoiding infinite delay backlogs.
+* **Disruption-aware routing**: Applies explicit scenario penalties (such as a Suez blockage) to affected transit legs while allowing route objectives to trade off time and cost.
 * **Air vs. Sea Economics**: Shifts high-value cargo to Air when the p85 risk of Sea transit (and inventory carry cost) outweighs the freight premium.
 * **Zero Latency Scaling**: With our static + dynamic risk overlay, multimodal routing latency dropped by **86%** (from 15s to ~2s per request).
 
@@ -137,7 +137,7 @@ npm run dev
 }
 ```
 
-**Response** (abbreviated — `recommendations` holds up to 3 persona-optimized routes, each with a full multi-leg `legs` array and `audit_trace`):
+**Response** (abbreviated — `recommendations` holds up to 3 persona-optimized routes, each with a full multi-leg `legs` array and `audit_trace`). Transit legs may report `P85_MODEL` or `SCENARIO` as their intelligence source depending on the active conditions:
 ```json
 {
   "origin": "Shanghai",
@@ -162,7 +162,7 @@ npm run dev
   ]
 }
 ```
-*(Captured from a real run against the trained model and canonical hub graph — not illustrative placeholder data.)*
+*The response shape above is abbreviated documentation; exact route values depend on the selected hubs, policy, and active scenario.*
 
 There's a second, older prototype endpoint, `POST /predict_route_risk` in `Execution/api.py`. It is **not** part of the live app (nothing imports or serves it from `backend/main.py`) — it's a standalone leftover from an earlier iteration and isn't wired to the frontend.
 
@@ -204,11 +204,9 @@ opportunities are if you want to push it toward something a real logistics team 
 — pick what's interesting, you don't need to attempt all of it:
 
 ### Smarter AI/ML
-- **Wire the trained ML model into live routing.** `ThreatIntelligencePredictor.predict_worst_case_delay()`
-  — the p85 quantile model — is loaded and warmed up at startup but never actually called by
-  `RouteRecommender.recommend()` today. Only the NLP+CARF semantic score currently feeds route
-  weighting. Connecting the model's real delay prediction into the routing decision is one of
-  the most meaningful upgrades available in this codebase.
+- **Live p85 routing intelligence (implemented).** `ThreatIntelligencePredictor.predict_worst_case_delay()`
+  is called during live route weighting and leg-level ETA composition. The calibrated p85 delay
+  is added to transit estimates, while explicit scenario penalties remain separate and auditable.
 - Predict multiple quantiles (p50 / p85 / p95) instead of a single point estimate, for a
   confidence band instead of one number.
 - Add real explainability (e.g. SHAP or permutation importance) to the model's predictions,
