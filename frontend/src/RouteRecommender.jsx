@@ -4,7 +4,7 @@ import {
   AlertTriangle, ShieldCheck, Clock, DollarSign, 
   Navigation, MapPin, ChevronRight, Info,
   Filter, ShieldAlert, Zap, Globe, Package,
-  ArrowRightLeft, AlertCircle, BarChart3, Activity, Layers, Terminal
+  ArrowRightLeft, AlertCircle, BarChart3, Activity, Layers, Terminal, Download
 } from 'lucide-react';
 
 const RouteRecommender = ({ onNavigate }) => {
@@ -21,6 +21,7 @@ const RouteRecommender = ({ onNavigate }) => {
   const [searchQuery, setSearchQuery] = useState({ source: '', dest: '' });
   const [searchResults, setSearchResults] = useState({ source: [], dest: [] });
   const [scenarios, setScenarios] = useState([]);
+  const [recommendationScenario, setRecommendationScenario] = useState(null);
 
   useEffect(() => {
     // Pull the live scenario list from the backend instead of hardcoding IDs here,
@@ -52,8 +53,10 @@ const RouteRecommender = ({ onNavigate }) => {
       if (data.error) {
         setError(data.error);
         setRecommendations([]);
+        setRecommendationScenario(null);
       } else {
         setRecommendations(data.recommendations);
+        setRecommendationScenario(data.active_scenario);
       }
     } catch (err) {
       setError("Engine connection failed. Verify backend status.");
@@ -71,6 +74,44 @@ const RouteRecommender = ({ onNavigate }) => {
       case 'transfer': return <ArrowRightLeft size={12} />;
       default: return <Navigation size={12} />;
     }
+  };
+
+  const auditedRecommendation = recommendations.reduce(
+    (selected, current) =>
+      current.audit_trace.eta.scenario > selected.audit_trace.eta.scenario
+        ? current
+        : selected,
+    recommendations[0]
+  );
+
+  const exportAuditCsv = () => {
+    const headers = [
+      'persona', 'origin', 'destination', 'active_scenario', 'route_eta_hours',
+      'route_cost', 'threat_level', 'eta_transit_hours', 'eta_transfer_hours',
+      'eta_scenario_hours', 'cost_transit', 'cost_transfer', 'cost_scenario',
+      'leg_index', 'leg_from', 'leg_to', 'leg_name', 'mode', 'leg_type',
+      'leg_eta_hours', 'leg_cost', 'scenario_cost', 'leg_threat', 'reason',
+      'intelligence_source'
+    ];
+    const escapeCsv = value => `"${String(value ?? '').replaceAll('"', '""')}"`;
+    const rows = recommendations.flatMap(rec => rec.legs.map((leg, index) => [
+      rec.persona, rec.origin, rec.destination, recommendationScenario, rec.adjusted_eta,
+      rec.total_cost, rec.threat_level, rec.audit_trace.eta.transit,
+      rec.audit_trace.eta.transfer, rec.audit_trace.eta.scenario,
+      rec.audit_trace.cost.transit, rec.audit_trace.cost.transfer,
+      rec.audit_trace.cost.scenario, index + 1, leg.from, leg.to, leg.to_name,
+      leg.mode, leg.type, leg.eta, leg.cost, leg.scenario_cost, leg.threat,
+      leg.reason, leg.intel_source
+    ]));
+    const csv = [headers, ...rows].map(row => row.map(escapeCsv).join(',')).join('\r\n');
+    const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `supplychainer-route-audit-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const handleSearch = async (type, query) => {
@@ -208,6 +249,17 @@ const RouteRecommender = ({ onNavigate }) => {
 
         {error && <div style={{color: '#ef4444', background: 'rgba(239, 68, 68, 0.1)', padding: '1rem', borderRadius: '8px', border: '1px solid #ef4444'}}>{error}</div>}
 
+        {recommendations.length > 0 && (
+          <button
+            type="button"
+            onClick={exportAuditCsv}
+            aria-label="Export route recommendations and audit details as CSV"
+            style={{display: 'inline-flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', padding: '0.65rem 0.9rem', background: '#0f172a', color: '#cbd5e1', border: '1px solid #334155', borderRadius: '6px', cursor: 'pointer'}}
+          >
+            <Download size={15} /> EXPORT AUDIT CSV
+          </button>
+        )}
+
         <div className="path-grid">
           {recommendations.map((rec, idx) => (
             <div key={idx} className="path-card">
@@ -216,8 +268,9 @@ const RouteRecommender = ({ onNavigate }) => {
                   rec.persona === 'FASTEST' ? 'tag-fastest' :
                   rec.persona === 'SAFEST' ? 'tag-safest' : 'tag-balanced'
                 }`}>{rec.persona}</span>
-                <div style={{display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', fontFamily: 'JetBrains Mono'}}>
-                   <Clock size={12} /> {rec.adjusted_eta}h
+                <div style={{display: 'flex', alignItems: 'center', gap: '0.65rem', fontSize: '0.75rem', fontFamily: 'JetBrains Mono'}}>
+                   <span style={{color: rec.threat_level >= 0.7 ? '#ef4444' : '#f59e0b'}}><ShieldAlert size={12} /> {Math.round(rec.threat_level * 100)}% RISK</span>
+                   <span style={{display: 'flex', alignItems: 'center', gap: '4px'}}><Clock size={12} /> {rec.adjusted_eta}h</span>
                 </div>
               </div>
               <div style={{padding: '1.25rem'}}>
@@ -266,17 +319,17 @@ const RouteRecommender = ({ onNavigate }) => {
         {recommendations.length > 0 ? (
           <div style={{display: 'flex', flexDirection: 'column', gap: '1rem'}}>
             <div className="audit-trace-box" style={{borderLeft: '4px solid #3b82f6'}}>
-               <div style={{marginBottom: '0.5rem', fontWeight: 700, color: '#f8fafc'}}>Forensic ETA Audit</div>
-               <div>Transit: {recommendations[0].audit_trace.eta.transit}h</div>
-               <div>Transfer: +{recommendations[0].audit_trace.eta.transfer}h</div>
-               <div>Scenario Impact: {recommendations[0].audit_trace.eta.scenario > 0 ? `+${recommendations[0].audit_trace.eta.scenario}h` : 'None'}</div>
+               <div style={{marginBottom: '0.5rem', fontWeight: 700, color: '#f8fafc'}}>Forensic ETA Audit · {auditedRecommendation.persona}</div>
+               <div>Transit: {auditedRecommendation.audit_trace.eta.transit}h</div>
+               <div>Transfer: +{auditedRecommendation.audit_trace.eta.transfer}h</div>
+               <div>Scenario Impact: {auditedRecommendation.audit_trace.eta.scenario > 0 ? `+${auditedRecommendation.audit_trace.eta.scenario}h` : 'None'}</div>
             </div>
 
             <div className="audit-trace-box" style={{borderLeft: '4px solid #10b981'}}>
                <div style={{marginBottom: '0.5rem', fontWeight: 700, color: '#f8fafc'}}>Cost Composition</div>
-               <div>Landed Base: ${recommendations[0].audit_trace.cost.transit.toLocaleString()}</div>
-               <div>Transfer Fees: ${recommendations[0].audit_trace.cost.transfer.toLocaleString()}</div>
-               <div>Risk Premium: ${recommendations[0].audit_trace.cost.scenario.toLocaleString()}</div>
+               <div>Landed Base: ${auditedRecommendation.audit_trace.cost.transit.toLocaleString()}</div>
+               <div>Transfer Fees: ${auditedRecommendation.audit_trace.cost.transfer.toLocaleString()}</div>
+               <div>Risk Premium: ${auditedRecommendation.audit_trace.cost.scenario.toLocaleString()}</div>
             </div>
 
             <div className="audit-trace-box" style={{borderLeft: '4px solid #f59e0b'}}>

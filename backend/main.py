@@ -110,7 +110,7 @@ def get_network():
 @app.get("/api/status")
 def get_status():
     return {
-        "ml_trained": True,
+        **cosmo_polo_telemetry(),
         "active_trips": len(simulator.active_trips),
         "tick": simulator.time_tick,
         "is_supplychainer": True,
@@ -118,22 +118,37 @@ def get_status():
         "hub_count": len(canonical_hubs)
     }
 
+def cosmo_polo_telemetry():
+    if recommender.warmup_failed:
+        engine_status = "WARM-UP FAILED"
+    elif not recommender.is_warmed_up:
+        engine_status = "WARMING RISK ENGINE"
+    else:
+        engine_status = "FULLY OPERATIONAL"
+
+    return {
+        "mission_control_status": "Mission Control Status: Stellar",
+        "engine_status": engine_status,
+        "ml_trained": recommender.predictor.is_trained,
+        "active_trips": len(simulator.active_trips),
+        "tick": simulator.time_tick,
+        "hub_count": len(canonical_hubs),
+        "node_count": multimodal_net.number_of_nodes(),
+        "edge_count": multimodal_net.number_of_edges()
+    }
+
+@app.get("/api/telemetry")
+def get_telemetry():
+    return cosmo_polo_telemetry()
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     try:
         while True:
-            if recommender.warmup_failed:
-                status_msg = "WARM-UP FAILED"
-            elif not recommender.is_warmed_up:
-                status_msg = "WARMING RISK ENGINE"
-            else:
-                status_msg = "FULLY OPERATIONAL"
-                
             state = {
                 "tick": simulator.time_tick,
-                "ml_trained": True,
-                "engine_status": status_msg,
+                **cosmo_polo_telemetry(),
                 "hub_registry": "Synchronized"
             }
             await websocket.send_text(json.dumps(state))

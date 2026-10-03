@@ -135,9 +135,15 @@ class RouteRecommender:
                         except Exception as e:
                             print(f"[P85] Edge prediction fallback: {e}")
                     
-                    if p_id in disruptions:
-                        threat = max(threat, disruptions[p_id]["threat"])
-                        delay += disruptions[p_id]["delay"]
+                    disruption = disruptions.get(p_id)
+                    scenario_applies = (
+                        disruption is not None
+                        and d["type"] == "transit"
+                        and mode == disruption["mode"]
+                    )
+                    if scenario_applies:
+                        threat = max(threat, disruption["threat"])
+                        delay += disruption["delay"]
                     
                     delay += p85_delay
                     
@@ -151,7 +157,8 @@ class RouteRecommender:
                         time_weight = 0.3
                         cost_weight = 0.5
                         risk_weight = 0.2
-                        return (base_t + delay)*time_weight + (base_c / 150.0)*cost_weight + (threat * 40.0)*risk_weight
+                        scenario_cost = base_c * 0.1 if scenario_applies else 0
+                        return (base_t + delay)*time_weight + ((base_c + scenario_cost) / 150.0)*cost_weight + (threat * 40.0)*risk_weight
 
                 path = nx.dijkstra_path(G_p, s_vnode, d_vnode, weight=weight_func)
                 
@@ -174,8 +181,11 @@ class RouteRecommender:
                     l_time = d["baseline_time"]
                     l_cost = d.get("cost", 0)
                     l_threat = d.get("base_threat", 0.05)
+                    baseline_threat = l_threat
                     l_news = d.get("base_news", "Standard conditions")
                     l_source = "FALLBACK"
+                    scenario_delay = 0
+                    scenario_cost = 0
                     
                     # Apply the same p85 prediction used by the route weight
                     # so displayed ETA matches the optimization logic.
@@ -203,25 +213,33 @@ class RouteRecommender:
                         except Exception as e:
                             print(f"[P85] Leg prediction fallback: {e}")
                     
-                    if p_id in disruptions:
-                        l_time += disruptions[p_id]["delay"]
-                        l_threat = max(l_threat, disruptions[p_id]["threat"])
-                        l_news = disruptions[p_id]["reason"]
+                    disruption = disruptions.get(p_id)
+                    scenario_applies = (
+                        disruption is not None
+                        and d["type"] == "transit"
+                        and mode == disruption["mode"]
+                    )
+                    if scenario_applies:
+                        scenario_delay = disruption["delay"]
+                        scenario_cost = l_cost * 0.1
+                        l_time += scenario_delay
+                        l_threat = max(l_threat, disruption["threat"])
+                        l_news = disruption["reason"]
                         l_source = "SCENARIO"
-                        trace["eta"]["scenario"] += disruptions[p_id]["delay"]
+                        trace["eta"]["scenario"] += scenario_delay
                         trace["risk"]["scenario"] = max(trace["risk"]["scenario"], l_threat)
-                        trace["cost"]["scenario"] += (l_cost * 0.1)
+                        trace["cost"]["scenario"] += scenario_cost
                     
                     if d["type"] == "transfer":
                         trace["eta"]["transfer"] += l_time
                         trace["cost"]["transfer"] += l_cost
                     else:
-                        trace["eta"]["transit"] += l_time
+                        trace["eta"]["transit"] += l_time - scenario_delay
                         trace["cost"]["transit"] += l_cost
-                        trace["risk"]["baseline"] = max(trace["risk"]["baseline"], l_threat)
+                        trace["risk"]["baseline"] = max(trace["risk"]["baseline"], baseline_threat)
 
                     total_time += l_time
-                    total_cost += l_cost
+                    total_cost += l_cost + scenario_cost
                     max_threat = max(max_threat, l_threat)
                     
                     legs.append({
@@ -231,7 +249,8 @@ class RouteRecommender:
                         "mode": mode.upper(),
                         "type": d["type"],
                         "eta": round(l_time, 1),
-                        "cost": round(l_cost, 2),
+                        "cost": round(l_cost + scenario_cost, 2),
+                        "scenario_cost": round(scenario_cost, 2),
                         "threat": round(l_threat, 2),
                         "reason": l_news,
                         "intel_source": l_source
@@ -240,6 +259,8 @@ class RouteRecommender:
                 if total_cost > cost_ceiling or total_time > (max_delay * 24): continue
 
                 candidates.append({
+                    "origin": source,
+                    "destination": destination,
                     "persona": persona,
                     "primary_mode": "MULTIMODAL",
                     "legs": legs,

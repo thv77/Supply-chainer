@@ -84,7 +84,8 @@ class ScenarioManager:
                 "delay": scenario["delay_hours"],
                 "threat": scenario["threat_level"],
                 "reason": scenario["reason"],
-                "source": "SCENARIO_OVERRIDE"
+                "source": "SCENARIO_OVERRIDE",
+                "mode": scenario["mode"]
             }
         return disruptions
 

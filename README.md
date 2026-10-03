@@ -117,6 +117,18 @@ npm run dev
 ```
 *Access the dashboard at `http://localhost:5173` (or the port specified by Vite).*
 
+### 3. Backend regression tests
+
+From the project root, run:
+
+```bash
+python -m unittest backend.tests.test_route_scenarios -v
+```
+
+The scenario tests verify that route ETA and cost breakdowns reconcile, that a Suez blockage
+can reroute traffic when a bypass is better, and that a sea-only disruption does not penalize
+air legs.
+
 ---
 
 ##  API Usage Example
@@ -163,6 +175,12 @@ npm run dev
 }
 ```
 *The response shape above is abbreviated documentation; exact route values depend on the selected hubs, policy, and active scenario.*
+
+The `audit_trace.eta` fields (`transit`, `transfer`, `scenario`) sum to `adjusted_eta`; the
+`audit_trace.cost` fields (`transit`, `transfer`, `scenario`) sum to `total_cost`. Scenario
+penalties apply only to transit edges using the scenario's configured transport mode. In the
+dashboard, use **EXPORT AUDIT CSV** to download route summaries, per-leg details, and audit
+breakdowns. `GET /api/telemetry` reports the live engine/model state and graph size.
 
 There's a second, older prototype endpoint, `POST /predict_route_risk` in `Execution/api.py`. It is **not** part of the live app (nothing imports or serves it from `backend/main.py`) — it's a standalone leftover from an earlier iteration and isn't wired to the frontend.
 
@@ -220,7 +238,7 @@ opportunities are if you want to push it toward something a real logistics team 
 - Replace the placeholder map text in `App.jsx`'s default view with a real interactive map
   (Leaflet/Mapbox) driven by the existing `/api/network` endpoint.
 - Route history — persist and compare past recommendations instead of losing them on refresh.
-- Export a route's full audit trail as PDF/CSV for a "boardroom-ready" report.
+- PDF audit reports; route summaries, leg details, and audit breakdowns can now be exported as CSV.
 - Real-time alerts when a newly activated scenario affects a route you've already generated.
 - A mobile-responsive layout — the current dashboard assumes a wide desktop screen.
 
@@ -236,7 +254,8 @@ opportunities are if you want to push it toward something a real logistics team 
 - Persist state in a real database instead of in-memory Python objects — right now a restart
   wipes everything, and there's no per-user or per-company data isolation.
 - Add authentication and basic multi-tenancy.
-- Add automated tests — there currently aren't any, for either the backend or the frontend.
+- Expand automated coverage beyond the backend route-scenario regression tests; there is not yet a
+  frontend test suite.
 - Cache or pre-compute more of the graph-weighting work so the engine scales past a few
   hundred nodes without the per-request cost growing with it.
 
